@@ -1,0 +1,11 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		}
+	],
+	"settings": {
+		"task.allowAutomaticTasks": "on",
+		"window.autoDetectColorScheme": true
+	}
+}
