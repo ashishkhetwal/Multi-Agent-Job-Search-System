@@ -1,75 +1,58 @@
+from crewai import Agent, Task
+from langchain_google_genai import ChatGoogleGenerativeAI
+from utils.config import GEMINI_API_KEY
 
-from crewai import Crew, Process
-from agents.jd_analyst import get_jd_analyst_agent, create_jd_analysis_task
-from utils.tracking import log_application, save_cover_letter_file
-from agents.resume_cl_agent import get_resume_cl_agent, create_resume_cl_task
-from agents.messaging_agent import get_messaging_agent, create_messaging_task
-
-
-def extract_between_markers(text, start_marker, end_marker):
-    try:
-        start = text.index(start_marker) + len(start_marker)
-        end = text.index(end_marker)
-        return text[start:end].strip()
-    except ValueError:
-        return ""
+llm = ChatGoogleGenerativeAI(
+    model="gemini-3.8-flash",
+    google_api_key=GEMINI_API_KEY
+)
 
 
-def run_pipeline(job, resume_content, user_bio):
-
-    job_details = job['MatchedObjectDescriptor']
-    job_summary = job_details['UserArea']['Details']['JobSummary']
-
-    if 'OrganizationName' in job_details:
-        agency_name = job_details['OrganizationName']
-    else:
-        agency_name = 'Unknown Agency'
-
-    if 'PositionTitle' in job_details:
-        job_title = job_details['PositionTitle']
-    else:
-        job_title = 'Unknown Position'
-
-    # Initialize agents
-    messaging_agent = get_messaging_agent()
-    jd_analyst = get_jd_analyst_agent()
-    resume_writer = get_resume_cl_agent()
-
-    # Create tasks
-    messaging_task = create_messaging_task(
-        messaging_agent, job_summary, user_bio, agency_name, resume_content
-    )
-
-    jd_task = create_jd_analysis_task(jd_analyst, job_summary)
-
-    resume_task = create_resume_cl_task(
-        resume_writer, job_summary, resume_content
-    )
-
-    crew = Crew(
-        agents=[jd_analyst, resume_writer, messaging_agent],
-        tasks=[jd_task, resume_task, messaging_task],
-        process=Process.sequential,
+def get_resume_cl_agent():
+    return Agent(
+        role='Resume and Cover Letter Writer',
+        goal=(
+            'Create tailored, professional resumes and compelling cover letters '
+            'that align a candidate’s qualifications, skills, and experience '
+            'with the requirements of a specific job description.'
+        ),
+        backstory=(
+            'You are an experienced career consultant and professional resume '
+            'writer with expertise in recruitment, applicant tracking systems (ATS), '
+            'and job application optimization. You understand how recruiters '
+            'evaluate candidates and how to highlight relevant skills, projects, '
+            'achievements, and experience. You write clear, concise, and impactful '
+            'resumes and cover letters without inventing or exaggerating '
+            'the candidate’s qualifications.'
+        ),
+        llm=llm,
         verbose=True
     )
 
-    result = crew.kickoff()
 
-    # Extract resume agent output
-    resume_output = str(resume_task.output)
+def create_resume_cl_task(agent, job_summary, resume_text):
+    return Task(
+        description=(
+            f"Candidate's Resume:\n{resume_text}\n\n"
+            f"Government Job Description:\n{job_summary}\n\n"
+            "Perform the following tasks:\n"
+            "1. Tailor the candidate's resume to highlight relevant "
+            "qualifications, skills, and experience that match the job requirements.\n"
+            "2. Generate a personalized, professional cover letter explaining "
+            "why the candidate is suitable for this government position.\n\n"
+            "Ensure both documents are clear, professional, and ATS-friendly. "
+            "Do not fabricate qualifications, skills, or experience. "
+            "Use only the information provided."
+        ),
+        expected_output="""Generate exactly two sections using these markers:
 
-    # Extract resume summary
-    resume_summary = extract_between_markers(
-        resume_output, "<<RESUME_SUMMARY>>", "<<COVER_LETTER>>"
+<<RESUME_SUMMARY>>
+A tailored 3-5 sentence resume summary.
+
+<<COVER_LETTER>>
+A personalized, professional cover letter.
+
+Preserve both markers exactly. Do not omit them.""",
+        agent=agent,
+        output_file="/data/resume_agent_output.txt"
     )
-
-    # Extract cover letter (everything after its marker)
-    cover_letter = resume_output.split("<<COVER_LETTER>>", 1)[-1].strip()
-
-    # Log application details
-    log_application(job_title, agency_name, resume_summary)
-
-    # Save cover letter
-    save_cover_letter_file(job_title, cover_letter)
-
-    return result
